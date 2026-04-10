@@ -2,8 +2,9 @@ import { Ionicons } from '@expo/vector-icons'; // Import icons
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Modal, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import riddlesData from '../../assets/data/riddles';
+import { checkAnswer } from '../../utils/answerChecker';
 import { useTheme } from '../ThemeContext';
 
 const App = () => {
@@ -21,6 +22,43 @@ const App = () => {
     const [showHint, setShowHint] = useState(false);
     const [showAnswer, setShowAnswer] = useState(false);
     const [shareHint, setShareHint] = useState(false);
+    const [userGuess, setUserGuess] = useState('');
+    const [checkResult, setCheckResult] = useState(null);
+
+    // Check user's answer
+    const handleCheckAnswer = () => {
+        if (!userGuess.trim()) {
+            showTransientToast('Please enter an answer');
+            return;
+        }
+        const result = checkAnswer(userGuess, answer, 0.75); // Change 0.75 for more/less strict
+        setCheckResult(result);
+
+        if (result.isCorrect) {
+            // Track solved riddle
+            trackSolvedRiddle();
+        }
+    };
+
+    const trackSolvedRiddle = async () => {
+        try {
+            const solvedKey = '@riddles_solved';
+            const existing = await AsyncStorage.getItem(solvedKey);
+            const solved = existing ? JSON.parse(existing) : [];
+            const riddle_id = `${riddle}_${answer}`;
+            if (!solved.includes(riddle_id)) {
+                solved.push(riddle_id);
+                await AsyncStorage.setItem(solvedKey, JSON.stringify(solved));
+            }
+        } catch (error) {
+            console.error('Error tracking solved riddle:', error);
+        }
+    };
+
+    const clearGuess = () => {
+        setUserGuess('');
+        setCheckResult(null);
+    };
 
     // Bookmark the current riddle
     const toggleBookmark = async () => {
@@ -95,6 +133,7 @@ const App = () => {
         setAnswer(riddleObj.answer);
         setShowHint(false);
         setShowAnswer(false);
+        clearGuess();
     };
 
 
@@ -160,6 +199,46 @@ const App = () => {
                     <Text style={[styles.revelation, { color: theme.text }]}>✓ Answer: {answer}</Text>
                 )}
             </View>
+
+            {/* Answer Input Section */}
+            <View style={[styles.answerInputContainer, { backgroundColor: theme.container, borderColor: theme.tint }]}>
+                <Text style={[styles.answerInputLabel, { color: theme.text }]}>Try to answer:</Text>
+                <TextInput
+                    style={[styles.answerInput, { color: theme.text, borderColor: checkResult?.isCorrect ? '#4caf50' : theme.tint, backgroundColor: theme.background }]}
+                    placeholder="Type your answer..."
+                    placeholderTextColor={theme.text + '80'}
+                    value={userGuess}
+                    onChangeText={setUserGuess}
+                    editable={!checkResult?.isCorrect}
+                />
+                {checkResult && (
+                    <View style={[styles.checkResultBox, { backgroundColor: checkResult.isCorrect ? '#c8e6c9' : '#fff3cd', borderColor: checkResult.isCorrect ? '#4caf50' : '#ffc107' }]}>
+                        <Text style={[styles.checkResultText, { color: checkResult.isCorrect ? '#2e7d32' : '#856404' }]}>
+                            {checkResult.isCorrect ? '✓ Correct!' : `${checkResult.similarity}% match`}
+                        </Text>
+                    </View>
+                )}
+                <View style={styles.answerButtonsRow}>
+                    <TouchableOpacity
+                        style={[styles.answerButton, { backgroundColor: checkResult?.isCorrect ? '#4caf50' : theme.button }]}
+                        onPress={handleCheckAnswer}
+                        disabled={!userGuess.trim()}
+                    >
+                        <Text style={[styles.answerButtonText, { color: theme.buttonText }]}>
+                            {checkResult?.isCorrect ? 'Correct! 🎉' : 'Check Answer'}
+                        </Text>
+                    </TouchableOpacity>
+                    {checkResult && (
+                        <TouchableOpacity
+                            style={[styles.answerButton, { backgroundColor: theme.button }]}
+                            onPress={clearGuess}
+                        >
+                            <Text style={[styles.answerButtonText, { color: theme.buttonText }]}>Clear</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </View>
+
             <View style={styles.revealButtonsRow}>
                 <TouchableOpacity style={[styles.revealButton, { backgroundColor: theme.button }]} onPress={() => setShowHint(!showHint)}>
                     <Text style={[styles.revealButtonText, { color: theme.buttonText }]}>{showHint ? 'Hide Hint' : 'Show Hint'}</Text>
@@ -423,6 +502,61 @@ const styles = StyleSheet.create({
     checkboxLabel: {
         fontSize: 16,
         fontWeight: '500',
+    },
+    answerInputContainer: {
+        width: '90%',
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 16,
+        borderWidth: 1.5,
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 3,
+    },
+    answerInputLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        marginBottom: 8,
+    },
+    answerInput: {
+        borderWidth: 1.5,
+        borderRadius: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        fontSize: 16,
+        marginBottom: 10,
+    },
+    checkResultBox: {
+        borderWidth: 1.5,
+        borderRadius: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        marginBottom: 10,
+        alignItems: 'center',
+    },
+    checkResultText: {
+        fontSize: 15,
+        fontWeight: '600',
+    },
+    answerButtonsRow: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    answerButton: {
+        flex: 1,
+        paddingVertical: 10,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    answerButtonText: {
+        fontSize: 14,
+        fontWeight: '600',
     },
 
 });
