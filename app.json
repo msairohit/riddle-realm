@@ -4,7 +4,7 @@
     "slug": "riddle-realm",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/quotes-logo.png",
+    "icon": "./assets/images/riddles-logo.png",
     "scheme": "riddlerealm",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -13,7 +13,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/quotes-logo.png",
+        "foregroundImage": "./assets/images/riddles-logo.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -29,7 +29,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/quotes-logo.png",
+          "image": "./assets/images/riddles-logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"

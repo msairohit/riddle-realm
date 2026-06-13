@@ -1,0 +1,16 @@
+future features
+
+remove current theme selection functionality and add new age range selection screen on 1st time opening and change and fix the theme based on the age range.
+limit number of bookmarks and hints and need to see an ad to add extra bookmark or hint. 
+show ad before sharing the riddle.
+improve answer checking mechanism/scoring.
+add sounds and vibrations for all actions.
+
+
+
+
+npx expo prebuild (to generate the native android and ios code. not eject, still can use expo related stuff but can be used to build the apps locally.)
+npx expo run:android --variant debug (connect the mobile to laptop and run this cmd to build the app, generate the apk and install to the mobile with hot reload, connceted to dev server.)
+npx expo run:android --variant release (same as above but does not connect to metro and hence no need to run the server and no hot reloading.)
+expo start -d (if we just want to run the app on mobile. if not installed any new packages then this cmd is enough no need for above cmd.) 
+npx expo start -c
