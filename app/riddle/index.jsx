@@ -1,8 +1,8 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Stack, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import AnimatedProfileIcon from '../../components/AnimatedProfileIcon';
 import {
     Dimensions,
@@ -17,9 +17,13 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { AdEventType, BannerAd, BannerAdSize, InterstitialAd, InterstitialAdEventType } from '../../utils/googleMobileAds';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import riddlesData from '../../assets/data/riddles';
+import { useRewardedAd } from '../../hooks/useRewardedAd';
+import { AD_UNITS, getAdSettings } from '../../utils/admob';
 import { checkAnswer } from '../../utils/answerChecker';
+import { playSound, startBgMusic, stopBgMusic, vibrate } from '../../utils/soundManager';
 import { useTheme } from '../ThemeContext';
 
 const { height: screenHeight } = Dimensions.get('window');
@@ -45,6 +49,20 @@ const App = () => {
     // Tracks whether the hint was ever viewed for the current riddle.
     // Stays true even if the user hides the hint before answering.
     const [hintViewed, setHintViewed] = useState(false);
+
+    // ── Ad state ──────────────────────────────────────────────────────────────
+    const [adSettings, setAdSettings] = useState({ showAds: true, extraHintAd: true, extraBookmarkAd: true });
+    // Counter tracking how many riddles the user has navigated through this session.
+    // An interstitial fires at every 5th riddle.
+    const riddlesViewedRef = useRef(0);
+    // Interstitial ad instance — created once and reloaded after each show.
+    const interstitialRef = useRef(null);
+    const { showAd: showRewardedHintAd } = useRewardedAd(AD_UNITS.rewardedHint);
+    const { showAd: showRewardedBookmarkAd } = useRewardedAd(AD_UNITS.rewardedBookmark);
+    // Track how many hints have been used this session (admin hint limit)
+    const [hintsUsed, setHintsUsed] = useState(0);
+    const [hintLimit, setHintLimit] = useState(3); // default; updated from AsyncStorage
+    const [bookmarkLimit, setBookmarkLimit] = useState(5); // default; updated from AsyncStorage
 
 
 
@@ -108,7 +126,15 @@ const App = () => {
         setCheckResult(result);
 
         if (result.isCorrect) {
+            playSound('correct');
+            vibrate('success');
             trackSolvedRiddle(hintViewed);
+        } else if (result.similarity >= 65) {
+            playSound('near');
+            vibrate('light');
+        } else {
+            playSound('wrong');
+            vibrate('error');
         }
     };
 
@@ -146,7 +172,7 @@ const App = () => {
         setCheckResult(null);
     };
 
-    // Bookmark the current riddle
+    // Bookmark the current riddle (gated by bookmark limit + rewarded ad)
     const toggleBookmark = async () => {
         try {
             const existing = await AsyncStorage.getItem('bookmarkedRiddles');
@@ -154,15 +180,31 @@ const App = () => {
             const matchIndex = bookmarks.findIndex(b => b.riddle === riddle && b.answer === answer);
             let message = '';
             if (matchIndex >= 0) {
+                // Always allow removal
                 bookmarks.splice(matchIndex, 1);
                 message = 'Removed from bookmarks';
+                await AsyncStorage.setItem('bookmarkedRiddles', JSON.stringify(bookmarks));
+                setBookmarkedRiddles(bookmarks);
+                showTransientToast(message);
             } else {
-                bookmarks.push({ riddle, answer, hint: author });
-                message = 'Bookmarked';
+                // Check bookmark limit
+                const overLimit = adSettings.extraBookmarkAd && bookmarks.length >= bookmarkLimit;
+                if (overLimit) {
+                    showRewardedBookmarkAd(async () => {
+                        const fresh = await AsyncStorage.getItem('bookmarkedRiddles');
+                        const freshBookmarks = fresh ? JSON.parse(fresh) : [];
+                        freshBookmarks.push({ riddle, answer, hint: author });
+                        await AsyncStorage.setItem('bookmarkedRiddles', JSON.stringify(freshBookmarks));
+                        setBookmarkedRiddles(freshBookmarks);
+                        showTransientToast('Bookmark unlocked! 🎉');
+                    });
+                } else {
+                    bookmarks.push({ riddle, answer, hint: author });
+                    await AsyncStorage.setItem('bookmarkedRiddles', JSON.stringify(bookmarks));
+                    setBookmarkedRiddles(bookmarks);
+                    showTransientToast('Bookmarked');
+                }
             }
-            await AsyncStorage.setItem('bookmarkedRiddles', JSON.stringify(bookmarks));
-            setBookmarkedRiddles(bookmarks);
-            showTransientToast(message);
         } catch (error) {
             console.error('Error toggling bookmark:', error);
         }
@@ -226,10 +268,26 @@ const App = () => {
 
     const handleNext = async () => {
         if (cacheIndex < cache.length - 1) {
+            playSound('swipe');
+            vibrate('light');
             const nextIndex = cacheIndex + 1;
             setCacheIndex(nextIndex);
             loadRiddleAtIndex(cache, nextIndex);
             await AsyncStorage.setItem('currentRiddleIndex', nextIndex.toString());
+
+            // ── Interstitial every 5 riddles ─────────────────────────────────
+            riddlesViewedRef.current += 1;
+            if (
+                adSettings.showAds &&
+                riddlesViewedRef.current % 5 === 0 &&
+                interstitialRef.current
+            ) {
+                try {
+                    await interstitialRef.current.show();
+                } catch {
+                    // Ad not loaded yet — silently skip
+                }
+            }
         } else {
             showTransientToast('Already at last riddle');
         }
@@ -237,6 +295,8 @@ const App = () => {
 
     const handlePrev = async () => {
         if (cacheIndex > 0) {
+            playSound('swipe');
+            vibrate('light');
             const prevIndex = cacheIndex - 1;
             setCacheIndex(prevIndex);
             loadRiddleAtIndex(cache, prevIndex);
@@ -255,7 +315,74 @@ const App = () => {
     useEffect(() => {
         loadRiddles();
         fetchBookmarkedRiddles();
+
+        // ── Load admin settings ─────────────────────────────────────────────
+        const loadAdminAndAdSettings = async () => {
+            try {
+                const settings = await getAdSettings();
+                setAdSettings(settings);
+                const hl = await AsyncStorage.getItem('@admin_hint_limit');
+                if (hl !== null) setHintLimit(parseInt(hl, 10));
+                const bl = await AsyncStorage.getItem('@admin_bookmark_limit');
+                if (bl !== null) setBookmarkLimit(parseInt(bl, 10));
+            } catch (e) {
+                console.error('Error loading admin/ad settings:', e);
+            }
+        };
+        loadAdminAndAdSettings();
+
+        // ── Interstitial ad setup ────────────────────────────────────────────
+        const setupInterstitial = () => {
+            const interstitial = InterstitialAd.createForAdRequest(AD_UNITS.interstitial, {
+                requestNonPersonalizedAdsOnly: false,
+            });
+            const unsubLoaded = interstitial.addAdEventListener(InterstitialAdEventType.LOADED, () => {
+                // Ad is ready, no action needed
+            });
+            const unsubClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
+                unsubLoaded();
+                unsubClosed();
+                // Reload immediately after close so next interval is ready
+                setupInterstitial();
+            });
+            interstitial.load();
+            interstitialRef.current = interstitial;
+        };
+        setupInterstitial();
+
+        return () => {
+            interstitialRef.current = null;
+        };
     }, [loadRiddles, fetchBookmarkedRiddles]);
+
+    // ── Reload admin settings whenever screen comes into focus ─────────────────────
+    // This means Admin Panel changes take effect immediately on return.
+    // Also manages background music lifecycle.
+    useFocusEffect(
+        useCallback(() => {
+            // Start soothing background music when riddle screen is focused
+            startBgMusic();
+
+            const reloadSettings = async () => {
+                try {
+                    const settings = await getAdSettings();
+                    setAdSettings(settings);
+                    const hl = await AsyncStorage.getItem('@admin_hint_limit');
+                    if (hl !== null) setHintLimit(parseInt(hl, 10));
+                    const bl = await AsyncStorage.getItem('@admin_bookmark_limit');
+                    if (bl !== null) setBookmarkLimit(parseInt(bl, 10));
+                } catch (e) {
+                    console.error('Riddle: error reloading admin settings on focus', e);
+                }
+            };
+            reloadSettings();
+
+            // Stop music when navigating away from riddle screen
+            return () => {
+                stopBgMusic();
+            };
+        }, [])
+    );
 
     useEffect(() => {
         if (cacheIndex >= 0) {
@@ -307,7 +434,11 @@ const App = () => {
                             <TouchableOpacity
                                 activeOpacity={0.8}
                                 style={styles.backButtonCircle}
-                                onPress={() => router.back()}
+                                onPress={() => {
+                                    playSound('click');
+                                    vibrate('light');
+                                    router.back();
+                                }}
                             >
                                 <Ionicons name="chevron-back" size={24} color={theme.text} />
                             </TouchableOpacity>
@@ -335,7 +466,11 @@ const App = () => {
                         <View style={[styles.riddleCard, { backgroundColor: theme.cardBackground }]}>
                             <View style={styles.riddleCardHeader}>
                                 
-                                <TouchableOpacity activeOpacity={0.8} onPress={toggleBookmark} style={styles.heartButton}>
+                                <TouchableOpacity activeOpacity={0.8} onPress={() => {
+                                    playSound('bookmark');
+                                    vibrate('medium');
+                                    toggleBookmark();
+                                }} style={styles.heartButton}>
                                     <MaterialCommunityIcons 
                                         name={isBookmarked ? 'heart' : 'heart-outline'} 
                                         size={28} 
@@ -371,19 +506,27 @@ const App = () => {
                                 editable={!checkResult?.isCorrect}
                             />
 
-                            {checkResult && (
-                                <View style={[
-                                    styles.checkResultBox, 
-                                    { 
-                                        backgroundColor: checkResult.isCorrect ? '#E8F5E9' : '#FFF3E0', 
-                                        borderColor: checkResult.isCorrect ? '#2E7D32' : '#EF6C00' 
-                                    }
-                                ]}>
-                                    <Text style={[styles.checkResultText, { color: checkResult.isCorrect ? '#2E7D32' : '#E65100' }]}>
-                                        {checkResult.isCorrect ? '✓ Correct! 🎉' : `${checkResult.similarity}% match`}
-                                    </Text>
-                                </View>
-                            )}
+                            {checkResult && (() => {
+                                // Colour-grade the result box based on closeness
+                                const pct = checkResult.similarity;
+                                let bgColor, borderColor, textColor;
+                                if (checkResult.isCorrect) {
+                                    bgColor = '#E8F5E9'; borderColor = '#2E7D32'; textColor = '#2E7D32';
+                                } else if (pct >= 65) {
+                                    bgColor = '#FFF8E1'; borderColor = '#F9A825'; textColor = '#F57F17';
+                                } else if (pct >= 45) {
+                                    bgColor = '#FFF3E0'; borderColor = '#EF6C00'; textColor = '#E65100';
+                                } else {
+                                    bgColor = '#FBE9E7'; borderColor = '#BF360C'; textColor = '#BF360C';
+                                }
+                                return (
+                                    <View style={[styles.checkResultBox, { backgroundColor: bgColor, borderColor }]}>
+                                        <Text style={[styles.checkResultText, { color: textColor }]}>
+                                            {checkResult.isCorrect ? '✓ Correct! 🎉' : checkResult.message}
+                                        </Text>
+                                    </View>
+                                );
+                            })()}
 
                             <TouchableOpacity
                                 activeOpacity={0.8}
@@ -417,24 +560,60 @@ const App = () => {
 
                         {/* Hint & Answer Side-by-Side Buttons */}
                         <View style={styles.revealButtonsRow}>
-                            <TouchableOpacity 
-                                activeOpacity={0.8} 
-                                style={[styles.revealButton, { backgroundColor: theme.hintButton.backgroundColor }]} 
+                            <TouchableOpacity
+                                activeOpacity={0.8}
+                                style={[styles.revealButton, { backgroundColor: theme.hintButton.backgroundColor }]}
                                 onPress={() => {
-                                    if (!showHint) setHintViewed(true);
-                                    setShowHint(!showHint);
+                                    if (showHint) {
+                                        // Just toggling off — no limit consumed
+                                        setShowHint(false);
+                                        return;
+                                    }
+                                    if (hintViewed) {
+                                        // Already used the hint for this riddle — just re-show freely,
+                                        // no need to charge against the quota again.
+                                        setShowHint(true);
+                                        return;
+                                    }
+                                    // First reveal of hint for this riddle — check limit
+                                    const overLimit = adSettings.extraHintAd && hintsUsed >= hintLimit;
+                                    if (overLimit) {
+                                        showRewardedHintAd(() => {
+                                            setHintsUsed(h => h + 1);
+                                            setHintViewed(true);
+                                            setShowHint(true);
+                                            showTransientToast('Hint unlocked! 🎉');
+                                            playSound('hint');
+                                            vibrate('light');
+                                        });
+                                    } else {
+                                        setHintsUsed(h => h + 1);
+                                        setHintViewed(true);
+                                        setShowHint(true);
+                                        playSound('hint');
+                                        vibrate('light');
+                                    }
                                 }}
                             >
                                 <MaterialCommunityIcons name="lightbulb-on-outline" size={20} color={theme.hintButton.color} />
                                 <Text style={[styles.revealButtonText, { color: theme.hintButton.color }]}>
-                                    {showHint ? 'Hide Hint' : 'Show Hint'}
+                                    {showHint
+                                        ? 'Hide Hint'
+                                        : (adSettings.extraHintAd && !hintViewed && hintsUsed >= hintLimit
+                                            ? '🎬 Watch for Hint'
+                                            : 'Show Hint')
+                                    }
                                 </Text>
                             </TouchableOpacity>
 
                             <TouchableOpacity 
                                 activeOpacity={0.8} 
                                 style={[styles.revealButton, { backgroundColor: theme.answerButton.backgroundColor }]} 
-                                onPress={() => setShowAnswer(!showAnswer)}
+                                onPress={() => {
+                                    playSound('click');
+                                    vibrate('light');
+                                    setShowAnswer(!showAnswer);
+                                }}
                             >
                                 <MaterialCommunityIcons name="eye-outline" size={20} color={theme.answerButton.color} />
                                 <Text style={[styles.revealButtonText, { color: theme.answerButton.color }]}>
@@ -460,45 +639,61 @@ const App = () => {
                     </ScrollView>
 
                     {/* Bottom Pill Floating Toolbar */}
-                    <View style={styles.footerToolbarContainer}>
-                        <View style={styles.footerToolbar}>
-                            <TouchableOpacity 
-                                activeOpacity={0.8} 
-                                style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]} 
-                                onPress={handlePrev}
-                            >
-                                <Ionicons name="chevron-back" size={20} color={theme.text} />
-                            </TouchableOpacity>
-
-                            <TouchableOpacity 
-                                activeOpacity={0.8} 
-                                style={styles.toolbarButton} 
-                                onPress={toggleBookmark}
-                            >
-                                <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={24} color={theme.textSecondary} />
-                            </TouchableOpacity>
-
-                            {/* Central Riddle Number Badge */}
-                            <View style={[styles.centralBadgeContainer, { borderColor: theme.accent }]}>
-                                <MaterialCommunityIcons name="pound" size={16} color={theme.accent} style={styles.badgeStar} />
-                                <Text style={[styles.badgeIndexText, { color: theme.accent }]}>{cacheIndex + 1}</Text>
+                    <View style={styles.footerAdAndToolbarContainer}>
+                        {/* Banner Ad above toolbar */}
+                        {adSettings.showAds && (
+                            <View style={styles.riddleBannerAdContainer}>
+                                <BannerAd
+                                    unitId={AD_UNITS.banner}
+                                    size={BannerAdSize.BANNER}
+                                    requestOptions={{ requestNonPersonalizedAdsOnly: false }}
+                                />
                             </View>
+                        )}
+                        <View style={styles.footerToolbarContainer}>
+                            <View style={styles.footerToolbar}>
+                                <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]}
+                                    onPress={handlePrev}
+                                >
+                                    <Ionicons name="chevron-back" size={20} color={theme.text} />
+                                </TouchableOpacity>
 
-                            <TouchableOpacity 
-                                activeOpacity={0.8} 
-                                style={styles.toolbarButton} 
-                                onPress={() => setShowShareOptions(true)}
-                            >
-                                <Ionicons name="share-social-outline" size={24} color={theme.textSecondary} />
-                            </TouchableOpacity>
+                                <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    style={styles.toolbarButton}
+                                    onPress={() => {
+                                        playSound('bookmark');
+                                        vibrate('medium');
+                                        toggleBookmark();
+                                    }}
+                                >
+                                    <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={24} color={theme.textSecondary} />
+                                </TouchableOpacity>
 
-                            <TouchableOpacity 
-                                activeOpacity={0.8} 
-                                style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]} 
-                                onPress={handleNext}
-                            >
-                                <Ionicons name="chevron-forward" size={20} color={theme.text} />
-                            </TouchableOpacity>
+                                {/* Central Riddle Number Badge */}
+                                <View style={[styles.centralBadgeContainer, { borderColor: theme.accent }]}>
+                                    <MaterialCommunityIcons name="pound" size={16} color={theme.accent} style={styles.badgeStar} />
+                                    <Text style={[styles.badgeIndexText, { color: theme.accent }]}>{cacheIndex + 1}</Text>
+                                </View>
+
+                                <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    style={styles.toolbarButton}
+                                    onPress={() => setShowShareOptions(true)}
+                                >
+                                    <Ionicons name="share-social-outline" size={24} color={theme.textSecondary} />
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]}
+                                    onPress={handleNext}
+                                >
+                                    <Ionicons name="chevron-forward" size={20} color={theme.text} />
+                                </TouchableOpacity>
+                            </View>
                         </View>
                     </View>
                 </KeyboardAvoidingView>
@@ -515,7 +710,49 @@ const App = () => {
                             </TouchableOpacity>
                             <Text style={[styles.checkboxLabel, { color: theme.text }]}>Include hint in message</Text>
                         </View>
-                        <TouchableOpacity style={[styles.modalButton, { backgroundColor: theme.accent }]} onPress={() => { setShowShareOptions(false); shareRiddle(); setShareHint(false); }}>
+                        <TouchableOpacity
+                            style={[styles.modalButton, { backgroundColor: theme.accent }]}
+                            onPress={() => {
+                                // Capture share options BEFORE clearing state
+                                const hintFlag = shareHint;
+                                setShowShareOptions(false);
+                                setShareHint(false);
+
+                                // Build share message with captured options
+                                const doShare = async () => {
+                                    try {
+                                        let message = `"${riddle}"`;
+                                        if (hintFlag && author) {
+                                            message += `\n\n💡 Hint: ${author}`;
+                                        }
+                                        await Share.share({ message });
+                                    } catch {
+                                        showTransientToast('Could not share the riddle');
+                                    }
+                                };
+
+                                if (adSettings.showAds && interstitialRef.current) {
+                                    // Add a one-time listener: share after the ad closes
+                                    let unsub;
+                                    unsub = interstitialRef.current.addAdEventListener(
+                                        AdEventType.CLOSED,
+                                        () => {
+                                            if (unsub) unsub();
+                                            doShare();
+                                        }
+                                    );
+                                    try {
+                                        interstitialRef.current.show();
+                                    } catch {
+                                        // Ad not ready — share immediately
+                                        if (unsub) unsub();
+                                        doShare();
+                                    }
+                                } else {
+                                    doShare();
+                                }
+                            }}
+                        >
                             <Text style={[styles.modalButtonText, { color: theme.buttonText }]}>Share Now</Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.modalCancel} onPress={() => { setShowShareOptions(false); setShareHint(false); }}>
@@ -782,11 +1019,21 @@ const styles = StyleSheet.create({
         lineHeight: 22,
         fontWeight: '500',
     },
-    footerToolbarContainer: {
+    footerAdAndToolbarContainer: {
         position: 'absolute',
-        bottom: 24,
-        left: 24,
-        right: 24,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        paddingBottom: 16,
+    },
+    riddleBannerAdContainer: {
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    footerToolbarContainer: {
+        paddingHorizontal: 24,
+        width: '100%',
     },
     footerToolbar: {
         flexDirection: 'row',

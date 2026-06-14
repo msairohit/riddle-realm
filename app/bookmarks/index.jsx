@@ -1,8 +1,8 @@
 import { AntDesign, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Stack, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AnimatedProfileIcon from '../../components/AnimatedProfileIcon';
 import {
     Animated,
@@ -17,7 +17,11 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { BannerAd, BannerAdSize, AdEventType, InterstitialAd } from '../../utils/googleMobileAds';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRewardedAd } from '../../hooks/useRewardedAd';
+import { AD_UNITS, getAdSettings } from '../../utils/admob';
+import { playSound, vibrate } from '../../utils/soundManager';
 import { useTheme } from '../ThemeContext';
 
 const { height: screenHeight } = Dimensions.get('window');
@@ -35,6 +39,15 @@ const Bookmarks = () => {
     const [shareAnswer, setShareAnswer] = useState(false);
     const router = useRouter();
     const insets = useSafeAreaInsets();
+
+    // ── Ad state ──────────────────────────────────────────────────────────────
+    const [adSettings, setAdSettings] = useState({ showAds: true, extraBookmarkAd: true });
+    const [bookmarkLimit, setBookmarkLimit] = useState(5); // default
+    const { showAd: showRewardedBookmarkAd } = useRewardedAd(AD_UNITS.rewardedBookmark);
+    // Extra slots earned via rewarded ads this session
+    const extraBookmarkSlotsRef = useRef(0);
+    // Interstitial shown before share
+    const shareInterstitialRef = useRef(null);
 
     const scaleAnim = useRef(new Animated.Value(1)).current;
 
@@ -101,9 +114,60 @@ const Bookmarks = () => {
 
     useEffect(() => {
         fetchBookmarkedRiddles();
+        // Load admin ad settings and bookmark limit
+        const loadSettings = async () => {
+            try {
+                const settings = await getAdSettings();
+                setAdSettings(settings);
+                const bl = await AsyncStorage.getItem('@admin_bookmark_limit');
+                if (bl !== null) setBookmarkLimit(parseInt(bl, 10));
+            } catch (e) {
+                console.error('Bookmarks: error loading settings', e);
+            }
+        };
+        loadSettings();
+
+        // ── Interstitial for share ────────────────────────────────────────────
+        const setupShareInterstitial = () => {
+            const interstitial = InterstitialAd.createForAdRequest(AD_UNITS.interstitial, {
+                requestNonPersonalizedAdsOnly: false,
+            });
+            const unsubClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
+                unsubClosed();
+                // Reload immediately so next share is ready
+                setupShareInterstitial();
+            });
+            interstitial.load();
+            shareInterstitialRef.current = interstitial;
+        };
+        setupShareInterstitial();
+
+        return () => {
+            shareInterstitialRef.current = null;
+        };
     }, []);
 
+    // ── Reload admin settings on screen focus for real-time admin panel changes ──
+    useFocusEffect(
+        useCallback(() => {
+            const reloadSettings = async () => {
+                try {
+                    const settings = await getAdSettings();
+                    setAdSettings(settings);
+                    const bl = await AsyncStorage.getItem('@admin_bookmark_limit');
+                    if (bl !== null) setBookmarkLimit(parseInt(bl, 10));
+                } catch (e) {
+                    console.error('Bookmarks: error reloading settings on focus', e);
+                }
+            };
+            reloadSettings();
+            fetchBookmarkedRiddles(); // also refresh bookmark list
+        }, [fetchBookmarkedRiddles])
+    );
+
     const openModal = (item) => {
+        playSound('click');
+        vibrate('light');
         setSelectedRiddle(item);
         setShowDeleteConfirm(false);
         setShowHint(false);
@@ -112,6 +176,8 @@ const Bookmarks = () => {
     };
 
     const closeModal = () => {
+        playSound('click');
+        vibrate('light');
         setModalVisible(false);
         setSelectedRiddle(null);
         setShowHint(false);
@@ -136,6 +202,8 @@ const Bookmarks = () => {
 
     const deleteBookmark = async (riddleToDelete) => {
         try {
+            playSound('wrong');
+            vibrate('medium');
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             const indexToDelete = bookmarkedRiddles.findIndex(
                 bookmark => bookmark.riddle === riddleToDelete.riddle && bookmark.answer === riddleToDelete.answer
@@ -192,7 +260,11 @@ const Bookmarks = () => {
                         <TouchableOpacity
                             activeOpacity={0.8}
                             style={styles.backButtonCircle}
-                            onPress={() => router.back()}
+                            onPress={() => {
+                                playSound('click');
+                                vibrate('light');
+                                router.back();
+                            }}
                         >
                             <Ionicons name="chevron-back" size={24} color={theme.text} />
                         </TouchableOpacity>
@@ -246,6 +318,17 @@ const Bookmarks = () => {
                             </Text>
                         </View>
                     )}
+                    ListFooterComponent={() =>
+                        adSettings.showAds ? (
+                            <View style={styles.bookmarkBannerAdContainer}>
+                                <BannerAd
+                                    unitId={AD_UNITS.banner}
+                                    size={BannerAdSize.BANNER}
+                                    requestOptions={{ requestNonPersonalizedAdsOnly: false }}
+                                />
+                            </View>
+                        ) : null
+                    }
                 />
 
                 {/* Detail View Modal */}
@@ -374,7 +457,49 @@ const Bookmarks = () => {
                                 </TouchableOpacity>
                                 <Text style={[styles.checkboxLabel, { color: theme.text }]}>Include answer</Text>
                             </View>
-                            <TouchableOpacity style={[styles.modalButton, { backgroundColor: theme.accent }]} onPress={() => { setShowShareOptions(false); shareRiddle(); setShareHint(false); setShareAnswer(false); }}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, { backgroundColor: theme.accent }]}
+                                onPress={() => {
+                                    // Capture options BEFORE clearing state
+                                    const hintFlag   = shareHint;
+                                    const answerFlag = shareAnswer;
+                                    setShowShareOptions(false);
+                                    setShareHint(false);
+                                    setShareAnswer(false);
+
+                                    const doShare = async () => {
+                                        try {
+                                            let message = `"${selectedRiddle.riddle}"`;
+                                            const hint = selectedRiddle.hint || selectedRiddle.author || '';
+                                            if (hintFlag && hint) message += `\n\n💡 Hint: ${hint}`;
+                                            if (answerFlag && selectedRiddle.answer) message += `\n\n✓ Answer: ${selectedRiddle.answer}`;
+                                            await Share.share({ message });
+                                        } catch (error) {
+                                            console.error('Error sharing riddle:', error);
+                                        }
+                                    };
+
+                                    if (adSettings.showAds && shareInterstitialRef.current) {
+                                        let unsub;
+                                        unsub = shareInterstitialRef.current.addAdEventListener(
+                                            AdEventType.CLOSED,
+                                            () => {
+                                                if (unsub) unsub();
+                                                doShare();
+                                            }
+                                        );
+                                        try {
+                                            shareInterstitialRef.current.show();
+                                        } catch {
+                                            // Ad not ready — share immediately
+                                            if (unsub) unsub();
+                                            doShare();
+                                        }
+                                    } else {
+                                        doShare();
+                                    }
+                                }}
+                            >
                                 <Text style={[styles.modalButtonText, { color: theme.buttonText }]}>Share Now</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.modalCancel} onPress={() => { setShowShareOptions(false); setShareHint(false); setShareAnswer(false); }}>
@@ -467,6 +592,11 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingTop: 16,
         paddingBottom: 30,
+    },
+    bookmarkBannerAdContainer: {
+        alignItems: 'center',
+        marginTop: 12,
+        marginBottom: 8,
     },
     bookmarkItem: {
         flexDirection: 'row',

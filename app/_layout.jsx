@@ -7,9 +7,10 @@ import { Platform, UIManager } from 'react-native';
 import 'react-native-reanimated';
 import { ThemeProvider } from './ThemeContext'; // <-- Import ThemeProvider
 
-// Enable LayoutAnimation on Android
+// Enable LayoutAnimation on Android (only if New Architecture is not active)
 if (
     Platform.OS === 'android' &&
+    !global.nativeFabricUIManager &&
     UIManager.setLayoutAnimationEnabledExperimental
 ) {
     UIManager.setLayoutAnimationEnabledExperimental(true);

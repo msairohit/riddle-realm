@@ -3,17 +3,26 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
+import { BannerAd, BannerAdSize } from '../utils/googleMobileAds';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AnimatedProfileIcon from "../components/AnimatedProfileIcon";
+import { useSoundSettings } from '../hooks/useSoundSettings';
+import { AD_UNITS, getAdSettings } from '../utils/admob';
+import { playSound, vibrate } from '../utils/soundManager';
 import { useTheme } from "./ThemeContext";
+import { useDailyNotifications } from '../hooks/useDailyNotifications';
+import NotificationTimePrompt from '../components/NotificationTimePrompt';
 
 export default function Index() {
   const { theme, ageRange, ageRanges, setAgeRange } = useTheme();
   const insets = useSafeAreaInsets();
+  const { soundEnabled, musicEnabled, vibrationEnabled, toggleSound, toggleMusic, toggleVibration } = useSoundSettings();
+  const { hasPrompted, loadingSettings, notificationTime, saveNotificationTime, skipNotificationTime } = useDailyNotifications();
   const [bookmarkCount, setBookmarkCount] = useState(0);
   const [solvedCount, setSolvedCount] = useState(0);
   const [solvedWithHintCount, setSolvedWithHintCount] = useState(0);
+  const [showAds, setShowAds] = useState(true);
 
   // Redirect to age-selection onboarding screen if ageRange is not set
   useEffect(() => {
@@ -49,6 +58,8 @@ export default function Index() {
   useFocusEffect(
     useCallback(() => {
       loadStats();
+      // Refresh ad visibility flag every time the screen comes into focus
+      getAdSettings().then(s => setShowAds(s.showAds));
     }, [loadStats])
   );
 
@@ -100,7 +111,25 @@ export default function Index() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
+      {!loadingSettings && !hasPrompted && (
+        <NotificationTimePrompt
+          visible={!hasPrompted}
+          onSave={saveNotificationTime}
+          onSkip={skipNotificationTime}
+        />
+      )}
       <View style={styles.background}>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => {
+            playSound('click');
+            vibrate('light');
+            router.push('/profile');
+          }}
+          style={[styles.settingsFloatingButton, { top: Math.max(16, insets.top), backgroundColor: theme.cardBackground }]}
+        >
+          <MaterialCommunityIcons name="cog" size={24} color={theme.text} />
+        </TouchableOpacity>
         <LinearGradient
           colors={theme.gradientBackground}
           start={{ x: 0, y: 0 }}
@@ -157,7 +186,11 @@ export default function Index() {
             <TouchableOpacity
               activeOpacity={0.8}
               style={styles.actionButtonWrapper}
-              onPress={() => router.push("/riddle")}
+              onPress={() => {
+                playSound('click');
+                vibrate('light');
+                router.push('/riddle');
+              }}
             >
               <LinearGradient
                 colors={theme.buttonGradient}
@@ -178,7 +211,11 @@ export default function Index() {
             <TouchableOpacity
               activeOpacity={0.8}
               style={styles.bookmarkButton}
-              onPress={() => router.push("/bookmarks")}
+              onPress={() => {
+                playSound('click');
+                vibrate('light');
+                router.push('/bookmarks');
+              }}
             >
               <View style={styles.bookmarkContent}>
                 <View style={[styles.bookmarkIconCircle, { backgroundColor: theme.accent + '20' }]}>
@@ -193,43 +230,28 @@ export default function Index() {
             </TouchableOpacity>
           </View>
 
-          {/* Theme Switcher Section */}
-          <View style={[styles.themeSwitcherContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Theme</Text>
-            <View style={styles.themeSwatchRow}>
-              {ageRanges.map((r) => {
-                const swatchColors: Record<string, { dot: string; bg: string; label: string }> = {
-                  kids:    { dot: '#FF9F43', bg: '#FFF5E6', label: 'Sunny' },
-                  teens:   { dot: '#7C3AED', bg: '#EDE9FE', label: 'Violet' },
-                  adults:  { dot: '#0D9488', bg: '#E0F2F1', label: 'Mint' },
-                  seniors: { dot: '#1E40AF', bg: '#EFF6FF', label: 'Ocean' },
-                };
-                const swatch = swatchColors[r.id];
-                const isActive = ageRange === r.id;
-                return (
-                  <TouchableOpacity
-                    key={r.id}
-                    activeOpacity={0.8}
-                    onPress={() => setAgeRange(r.id)}
-                    style={[
-                      styles.swatchItem,
-                      isActive && { borderColor: swatch.dot, borderWidth: 2.5 },
-                      !isActive && { borderColor: 'transparent', borderWidth: 2.5 },
-                    ]}
-                  >
-                    <View style={[styles.swatchDot, { backgroundColor: swatch.dot }]}>
-                      {isActive && (
-                        <MaterialCommunityIcons name="check" size={14} color="#FFFFFF" />
-                      )}
-                    </View>
-                    <Text style={[styles.swatchLabel, { color: isActive ? swatch.dot : theme.textSecondary, fontWeight: isActive ? '700' : '500' }]}>
-                      {swatch.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+
+
+          {/* ── Banner Ad ── */}
+          {showAds && (
+            <View style={styles.bannerAdContainer}>
+              <BannerAd
+                unitId={AD_UNITS.banner}
+                size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                requestOptions={{ requestNonPersonalizedAdsOnly: false }}
+              />
             </View>
-          </View>
+          )}
+
+          {/* ── TEMP: Admin Button ── */}
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={() => router.push('/admin')}
+            style={styles.adminButton}
+          >
+            <MaterialCommunityIcons name="shield-crown" size={16} color="#A78BFA" />
+            <Text style={styles.adminButtonText}>Admin Panel</Text>
+          </TouchableOpacity>
         </ScrollView>
       </View>
     </>
@@ -404,6 +426,46 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 2,
+    marginBottom: 16,
+  },
+  soundSettingsContainer: {
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
+    marginBottom: 16,
+  },
+  soundRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  soundRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  soundIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  soundRowTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  soundRowSubtitle: {
+    fontSize: 12,
+    marginTop: 1,
+    fontWeight: '500',
   },
   sectionTitle: {
     fontSize: 12,
@@ -435,5 +497,57 @@ const styles = StyleSheet.create({
   swatchLabel: {
     fontSize: 11,
     textAlign: 'center',
+  },
+  bannerAdContainer: {
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 4,
+  },
+  adminButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    alignSelf: 'center',
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(167,139,250,0.4)',
+    backgroundColor: 'rgba(167,139,250,0.08)',
+  },
+  adminButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#A78BFA',
+    letterSpacing: 0.3,
+  },
+  changeTimeButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  changeTimeButtonText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  settingsFloatingButton: {
+    position: 'absolute',
+    right: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
 });

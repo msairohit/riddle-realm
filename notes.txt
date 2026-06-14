@@ -4,11 +4,11 @@ DEVELOPER PREFERENCE:
 future features
 
 (done)remove current theme selection functionality and add new age range selection screen on 1st time opening and change and fix the theme based on the age range.
-limit number of bookmarks and hints and need to see an ad to add extra bookmark or hint. 
-show ad before sharing the riddle.
-improve answer checking mechanism/scoring.
-add sounds and vibrations for all actions.
-send notifications daily with encouraging messages to do riddles.
+(done)limit number of bookmarks and hints and need to see an ad to add extra bookmark or hint. 
+(done)show ad before sharing the riddle.
+(done)improve answer checking mechanism/scoring.
+(done)add sounds and vibrations for all actions.
+(done)send notifications daily with encouraging messages to do riddles.
 
 
 

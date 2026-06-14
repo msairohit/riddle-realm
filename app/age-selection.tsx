@@ -11,6 +11,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { playSound, vibrate } from '../utils/soundManager';
 import { ageRanges, useTheme } from './ThemeContext';
 
 export default function AgeSelection() {
@@ -22,6 +23,8 @@ export default function AgeSelection() {
         if (!selectedId) return;
 
         try {
+            playSound('correct');
+            vibrate('success');
             // Set age range (which automatically updates theme)
             await setAgeRange(selectedId);
             // Auto accept disclaimer
@@ -116,7 +119,11 @@ export default function AgeSelection() {
                                             shadowOpacity: isSelected ? 0.25 : 0.05,
                                         },
                                     ]}
-                                    onPress={() => setSelectedId(item.id)}
+                                    onPress={() => {
+                                        playSound('click');
+                                        vibrate('light');
+                                        setSelectedId(item.id);
+                                    }}
                                 >
                                     <View style={styles.cardHeader}>
                                         <View
