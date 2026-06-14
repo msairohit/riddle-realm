@@ -3,16 +3,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
-import { BannerAd, BannerAdSize } from '../utils/googleMobileAds';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AnimatedProfileIcon from "../components/AnimatedProfileIcon";
+import NotificationTimePrompt from '../components/NotificationTimePrompt';
+import { useDailyNotifications } from '../hooks/useDailyNotifications';
 import { useSoundSettings } from '../hooks/useSoundSettings';
 import { AD_UNITS, getAdSettings } from '../utils/admob';
+import { BannerAd, BannerAdSize } from '../utils/googleMobileAds';
 import { playSound, vibrate } from '../utils/soundManager';
 import { useTheme } from "./ThemeContext";
-import { useDailyNotifications } from '../hooks/useDailyNotifications';
-import NotificationTimePrompt from '../components/NotificationTimePrompt';
 
 export default function Index() {
   const { theme, ageRange, ageRanges, setAgeRange } = useTheme();
@@ -35,21 +35,29 @@ export default function Index() {
     try {
       // Load bookmark count
       const bookmarks = await AsyncStorage.getItem('bookmarkedRiddles');
-      if (bookmarks) {
-        setBookmarkCount(JSON.parse(bookmarks).length);
-      }
+      const bookmarkedCountVal = bookmarks ? JSON.parse(bookmarks).length : 0;
+      setBookmarkCount(bookmarkedCountVal);
 
-      // Load solved riddles count
-      const solved = await AsyncStorage.getItem('@riddles_solved');
-      if (solved) {
-        setSolvedCount(JSON.parse(solved).length);
-      }
+      // Load unified progress stats
+      const progressStr = await AsyncStorage.getItem('@riddles_progress_state');
+      const progress = progressStr ? JSON.parse(progressStr) : {};
 
-      // Load solved with hint count
-      const solvedWithHint = await AsyncStorage.getItem('@riddles_solved_with_hint');
-      if (solvedWithHint) {
-        setSolvedWithHintCount(JSON.parse(solvedWithHint).length);
-      }
+      let solvedCountVal = 0;
+      let solvedWithHintCountVal = 0;
+
+      Object.values(progress).forEach((item: any) => {
+        if (item.solved) solvedCountVal++;
+        if (item.solvedWithHint) solvedWithHintCountVal++;
+      });
+
+      setSolvedCount(solvedCountVal);
+      setSolvedWithHintCount(solvedWithHintCountVal);
+
+      console.log('[HomeStats] Loaded:', {
+        bookmarks: bookmarkedCountVal,
+        solved: solvedCountVal,
+        solvedWithHint: solvedWithHintCountVal
+      });
     } catch (e) {
       console.error('Error loading stats:', e);
     }
@@ -57,6 +65,7 @@ export default function Index() {
 
   useFocusEffect(
     useCallback(() => {
+      console.log('[HomeStats] Screen focused, loading stats...');
       loadStats();
       // Refresh ad visibility flag every time the screen comes into focus
       getAdSettings().then(s => setShowAds(s.showAds));
@@ -119,17 +128,6 @@ export default function Index() {
         />
       )}
       <View style={styles.background}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() => {
-            playSound('click');
-            vibrate('light');
-            router.push('/profile');
-          }}
-          style={[styles.settingsFloatingButton, { top: Math.max(16, insets.top), backgroundColor: theme.cardBackground }]}
-        >
-          <MaterialCommunityIcons name="cog" size={24} color={theme.text} />
-        </TouchableOpacity>
         <LinearGradient
           colors={theme.gradientBackground}
           start={{ x: 0, y: 0 }}
@@ -143,7 +141,7 @@ export default function Index() {
             styles.scrollContent,
             {
               paddingTop: Math.max(24, insets.top + 12),
-              paddingBottom: Math.max(24, insets.bottom + 20),
+              paddingBottom: showAds ? 24 : Math.max(24, insets.bottom + 20),
               justifyContent: 'center'
             }
           ]}
@@ -152,9 +150,22 @@ export default function Index() {
           {/* Header Section */}
           <View style={styles.headerSection}>
             <View style={styles.headerTop}>
-              <View style={[styles.animatedIconWrapper, { shadowColor: theme.accent }]}>
-                <AnimatedProfileIcon profile={ageRange || 'adults'} size={90} />
-              </View>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => {
+                  playSound('click');
+                  vibrate('light');
+                  router.push('/profile');
+                }}
+                style={[styles.avatarButtonWrapper, { shadowColor: theme.accent }]}
+              >
+                <View style={styles.avatarContainer}>
+                  <AnimatedProfileIcon profile={ageRange || 'adults'} size={90} />
+                </View>
+                <View style={[styles.settingsBadge, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                  <MaterialCommunityIcons name="cog" size={16} color={theme.text} />
+                </View>
+              </TouchableOpacity>
               <View style={styles.headerTextWrapper}>
                 <Text style={[styles.headerTitle, { color: theme.text }]}>{headerMeta.title}</Text>
                 <Text style={[styles.headerSubtitle, { color: theme.textSecondary }]}>{headerMeta.subtitle}</Text>
@@ -168,16 +179,16 @@ export default function Index() {
               <View style={[styles.statIconWrapper, { backgroundColor: '#E8F5E9' }]}>
                 <MaterialCommunityIcons name="check-circle" size={24} color="#2E7D32" />
               </View>
-              <Text style={styles.statNumber}>{solvedCount}</Text>
-              <Text style={styles.statLabel}>Solved Riddles</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>{solvedCount}</Text>
+              <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Solved Riddles</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.statCard}>
               <View style={[styles.statIconWrapper, { backgroundColor: '#FFF3E0' }]}>
                 <MaterialCommunityIcons name="lightbulb" size={24} color="#EF6C00" />
               </View>
-              <Text style={styles.statNumber}>{solvedWithHintCount}</Text>
-              <Text style={styles.statLabel}>Solved with Hint</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>{solvedWithHintCount}</Text>
+              <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Solved with Hint</Text>
             </View>
           </View>
 
@@ -202,7 +213,7 @@ export default function Index() {
                   <View style={styles.actionIconCircle}>
                     <MaterialCommunityIcons name="play-circle-outline" size={26} color="#FFFFFF" />
                   </View>
-                  <Text style={styles.actionButtonText}>Get Riddles</Text>
+                  <Text style={styles.actionButtonText}>Solve Riddles</Text>
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={24} color="#FFFFFF" />
               </LinearGradient>
@@ -232,27 +243,33 @@ export default function Index() {
 
 
 
-          {/* ── Banner Ad ── */}
-          {showAds && (
-            <View style={styles.bannerAdContainer}>
-              <BannerAd
-                unitId={AD_UNITS.banner}
-                size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
-                requestOptions={{ requestNonPersonalizedAdsOnly: false }}
-              />
-            </View>
-          )}
-
           {/* ── TEMP: Admin Button ── */}
-          <TouchableOpacity
+          {/* <TouchableOpacity
             activeOpacity={0.75}
             onPress={() => router.push('/admin')}
             style={styles.adminButton}
           >
             <MaterialCommunityIcons name="shield-crown" size={16} color="#A78BFA" />
             <Text style={styles.adminButtonText}>Admin Panel</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </ScrollView>
+
+        {/* ── Sticky Banner Ad ── */}
+        {showAds && (
+          <View style={[
+            styles.stickyBannerAdContainer,
+            {
+              paddingBottom: Math.max(6, insets.bottom),
+              borderTopColor: theme.borderColor,
+            }
+          ]}>
+            <BannerAd
+              unitId={AD_UNITS.banner}
+              size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+              requestOptions={{ requestNonPersonalizedAdsOnly: false }}
+            />
+          </View>
+        )}
       </View>
     </>
   );
@@ -316,6 +333,7 @@ const styles = StyleSheet.create({
   statCard: {
     alignItems: 'center',
     flex: 1,
+    flexBasis: 0,
   },
   statIconWrapper: {
     width: 44,
@@ -503,6 +521,12 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 4,
   },
+  stickyBannerAdContainer: {
+    alignItems: 'center',
+    width: '100%',
+    paddingTop: 10,
+    borderTopWidth: 1,
+  },
   adminButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -535,19 +559,39 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: 'bold',
   },
-  settingsFloatingButton: {
-    position: 'absolute',
-    right: 24,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  avatarButtonWrapper: {
+    position: 'relative',
+    width: 90,
+    height: 90,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  avatarContainer: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.15,
     shadowRadius: 4,
   },
 });

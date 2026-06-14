@@ -6,6 +6,7 @@ import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import AnimatedProfileIcon from '../../components/AnimatedProfileIcon';
 import {
     Dimensions,
+    Keyboard,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -17,7 +18,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { AdEventType, BannerAd, BannerAdSize, InterstitialAd, InterstitialAdEventType } from '../../utils/googleMobileAds';
+import { AdEventType, BannerAd, BannerAdSize, InterstitialAd } from '../../utils/googleMobileAds';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import riddlesData from '../../assets/data/riddles';
 import { useRewardedAd } from '../../hooks/useRewardedAd';
@@ -27,6 +28,10 @@ import { playSound, startBgMusic, stopBgMusic, vibrate } from '../../utils/sound
 import { useTheme } from '../ThemeContext';
 
 const { height: screenHeight } = Dimensions.get('window');
+
+const HINTS_USED_KEY = '@riddles_hints_used';
+const HINTS_DATE_KEY = '@riddles_hints_last_date';
+const PROGRESS_STATE_KEY = '@riddles_progress_state';
 
 const App = () => {
     const { theme, ageRange } = useTheme();
@@ -46,8 +51,6 @@ const App = () => {
     const [shareHint, setShareHint] = useState(false);
     const [userGuess, setUserGuess] = useState('');
     const [checkResult, setCheckResult] = useState(null);
-    // Tracks whether the hint was ever viewed for the current riddle.
-    // Stays true even if the user hides the hint before answering.
     const [hintViewed, setHintViewed] = useState(false);
 
     // ── Ad state ──────────────────────────────────────────────────────────────
@@ -63,6 +66,38 @@ const App = () => {
     const [hintsUsed, setHintsUsed] = useState(0);
     const [hintLimit, setHintLimit] = useState(3); // default; updated from AsyncStorage
     const [bookmarkLimit, setBookmarkLimit] = useState(5); // default; updated from AsyncStorage
+
+    const syncHintsUsed = async () => {
+        try {
+            const today = new Date().toDateString();
+            const lastDate = await AsyncStorage.getItem(HINTS_DATE_KEY);
+            if (lastDate !== today) {
+                await AsyncStorage.setItem(HINTS_DATE_KEY, today);
+                await AsyncStorage.setItem(HINTS_USED_KEY, '0');
+                setHintsUsed(0);
+            } else {
+                const used = await AsyncStorage.getItem(HINTS_USED_KEY);
+                setHintsUsed(used ? parseInt(used, 10) : 0);
+            }
+        } catch (e) {
+            console.error('Riddle: error syncing hints used', e);
+        }
+    };
+
+    const incrementHintsUsed = async () => {
+        try {
+            const today = new Date().toDateString();
+            const usedStr = await AsyncStorage.getItem(HINTS_USED_KEY);
+            const currentUsed = usedStr ? parseInt(usedStr, 10) : 0;
+            const newUsed = currentUsed + 1;
+            await AsyncStorage.setItem(HINTS_DATE_KEY, today);
+            await AsyncStorage.setItem(HINTS_USED_KEY, newUsed.toString());
+            setHintsUsed(newUsed);
+        } catch (e) {
+            console.error('Riddle: error incrementing hints used', e);
+            setHintsUsed(h => h + 1);
+        }
+    };
 
 
 
@@ -142,26 +177,16 @@ const App = () => {
     const trackSolvedRiddle = async (usedHint = false) => {
         try {
             const riddle_id = `${riddle}_${answer}`;
-
-            // Track as solved (correct answer by user input)
-            const solvedKey = '@riddles_solved';
-            const existing = await AsyncStorage.getItem(solvedKey);
-            const solved = existing ? JSON.parse(existing) : [];
-            if (!solved.includes(riddle_id)) {
-                solved.push(riddle_id);
-                await AsyncStorage.setItem(solvedKey, JSON.stringify(solved));
+            const existing = await AsyncStorage.getItem(PROGRESS_STATE_KEY);
+            const progress = existing ? JSON.parse(existing) : {};
+            if (!progress[riddle_id]) {
+                progress[riddle_id] = {};
             }
-
-            // Track hint-assisted solves in a separate key
+            progress[riddle_id].solved = true;
             if (usedHint) {
-                const hintKey = '@riddles_solved_with_hint';
-                const existingHint = await AsyncStorage.getItem(hintKey);
-                const solvedWithHint = existingHint ? JSON.parse(existingHint) : [];
-                if (!solvedWithHint.includes(riddle_id)) {
-                    solvedWithHint.push(riddle_id);
-                    await AsyncStorage.setItem(hintKey, JSON.stringify(solvedWithHint));
-                }
+                progress[riddle_id].solvedWithHint = true;
             }
+            await AsyncStorage.setItem(PROGRESS_STATE_KEY, JSON.stringify(progress));
         } catch (error) {
             console.error('Error tracking solved riddle:', error);
         }
@@ -236,16 +261,49 @@ const App = () => {
         }
     }, []);
 
-    const loadRiddleAtIndex = useCallback((cacheArray, index) => {
+    const loadRiddleAtIndex = useCallback(async (cacheArray, index) => {
         const riddleObj = cacheArray[index];
-        setRiddle(riddleObj.riddle);
+        const rText = riddleObj.riddle;
+        const aText = riddleObj.answer;
+        setRiddle(rText);
         setAuthor(riddleObj.hint);
-        setAnswer(riddleObj.answer);
+        setAnswer(aText);
         setShowHint(false);
         setShowAnswer(false);
-        setHintViewed(false); // reset per-riddle hint flag
-        clearGuess();
+        
+        try {
+            const riddle_id = `${rText}_${aText}`;
+            const existing = await AsyncStorage.getItem(PROGRESS_STATE_KEY);
+            const progress = existing ? JSON.parse(existing) : {};
+            const itemProgress = progress[riddle_id] || {};
+            setHintViewed(!!itemProgress.hintViewed);
+            if (itemProgress.solved) {
+                setUserGuess(aText);
+                setCheckResult({ isCorrect: true, similarity: 100, message: '✓ Correct! 🎉' });
+            } else {
+                clearGuess();
+            }
+        } catch (e) {
+            setHintViewed(false);
+            clearGuess();
+        }
     }, []);
+
+    const persistHintViewed = async (rText = riddle, aText = answer) => {
+        try {
+            const riddle_id = `${rText}_${aText}`;
+            const existing = await AsyncStorage.getItem(PROGRESS_STATE_KEY);
+            const progress = existing ? JSON.parse(existing) : {};
+            if (!progress[riddle_id]) {
+                progress[riddle_id] = {};
+            }
+            progress[riddle_id].hintViewed = true;
+            await AsyncStorage.setItem(PROGRESS_STATE_KEY, JSON.stringify(progress));
+            setHintViewed(true);
+        } catch (e) {
+            console.error('Error persisting hint viewed status:', e);
+        }
+    };
 
     const loadRiddles = useCallback(async () => {
         try {
@@ -256,8 +314,28 @@ const App = () => {
             }));
             if (nextCache.length > 0) {
                 setCache(nextCache);
-                const savedIndex = await AsyncStorage.getItem('currentRiddleIndex');
-                const indexToUse = savedIndex ? Math.min(parseInt(savedIndex), nextCache.length - 1) : 0;
+                
+                const progressStr = await AsyncStorage.getItem(PROGRESS_STATE_KEY);
+                const progress = progressStr ? JSON.parse(progressStr) : {};
+                
+                // Find the first unsolved riddle
+                let firstUnsolvedIndex = -1;
+                for (let i = 0; i < nextCache.length; i++) {
+                    const rId = `${nextCache[i].riddle}_${nextCache[i].answer}`;
+                    if (!progress[rId] || !progress[rId].solved) {
+                        firstUnsolvedIndex = i;
+                        break;
+                    }
+                }
+
+                let indexToUse = 0;
+                if (firstUnsolvedIndex !== -1) {
+                    indexToUse = firstUnsolvedIndex;
+                } else {
+                    const savedIndex = await AsyncStorage.getItem('currentRiddleIndex');
+                    indexToUse = savedIndex ? Math.min(parseInt(savedIndex), nextCache.length - 1) : 0;
+                }
+
                 setCacheIndex(indexToUse);
                 loadRiddleAtIndex(nextCache, indexToUse);
             }
@@ -315,6 +393,7 @@ const App = () => {
     useEffect(() => {
         loadRiddles();
         fetchBookmarkedRiddles();
+        syncHintsUsed();
 
         // ── Load admin settings ─────────────────────────────────────────────
         const loadAdminAndAdSettings = async () => {
@@ -336,7 +415,7 @@ const App = () => {
             const interstitial = InterstitialAd.createForAdRequest(AD_UNITS.interstitial, {
                 requestNonPersonalizedAdsOnly: false,
             });
-            const unsubLoaded = interstitial.addAdEventListener(InterstitialAdEventType.LOADED, () => {
+            const unsubLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => {
                 // Ad is ready, no action needed
             });
             const unsubClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
@@ -371,6 +450,7 @@ const App = () => {
                     if (hl !== null) setHintLimit(parseInt(hl, 10));
                     const bl = await AsyncStorage.getItem('@admin_bookmark_limit');
                     if (bl !== null) setBookmarkLimit(parseInt(bl, 10));
+                    await syncHintsUsed();
                 } catch (e) {
                     console.error('Riddle: error reloading admin settings on focus', e);
                 }
@@ -458,7 +538,11 @@ const App = () => {
                     <ScrollView
                         contentContainerStyle={[
                             styles.scrollContent,
-                            { paddingBottom: 110 + Math.max(16, insets.bottom) }
+                            {
+                                paddingBottom: adSettings.showAds
+                                    ? 140 + Math.max(16, insets.bottom)
+                                    : 80 + Math.max(16, insets.bottom)
+                            }
                         ]}
                         showsVerticalScrollIndicator={false}
                     >
@@ -530,9 +614,9 @@ const App = () => {
 
                             <TouchableOpacity
                                 activeOpacity={0.8}
-                                disabled={!userGuess.trim()}
+                                disabled={checkResult?.isCorrect || !userGuess.trim()}
                                 onPress={handleCheckAnswer}
-                                style={styles.checkButtonWrapper}
+                                style={[styles.checkButtonWrapper, checkResult?.isCorrect && { opacity: 0.6 }]}
                             >
                                 <LinearGradient
                                     colors={checkResult?.isCorrect ? ['#2E7D32', '#4CAF50'] : theme.buttonGradient}
@@ -543,11 +627,13 @@ const App = () => {
                                     <Text style={styles.checkButtonText}>
                                         {checkResult?.isCorrect ? 'Correct! 🎉' : 'Check Answer'}
                                     </Text>
-                                    <Ionicons name="chevron-forward" size={18} color="#FFFFFF" style={styles.chevronIcon} />
+                                    {!checkResult?.isCorrect && (
+                                        <Ionicons name="chevron-forward" size={18} color="#FFFFFF" style={styles.chevronIcon} />
+                                    )}
                                 </LinearGradient>
                             </TouchableOpacity>
-
-                            {checkResult && (
+ 
+                            {checkResult && !checkResult.isCorrect && (
                                 <TouchableOpacity
                                     activeOpacity={0.8}
                                     style={styles.clearButton}
@@ -557,12 +643,17 @@ const App = () => {
                                 </TouchableOpacity>
                             )}
                         </View>
-
+ 
                         {/* Hint & Answer Side-by-Side Buttons */}
                         <View style={styles.revealButtonsRow}>
                             <TouchableOpacity
                                 activeOpacity={0.8}
-                                style={[styles.revealButton, { backgroundColor: theme.hintButton.backgroundColor }]}
+                                disabled={checkResult?.isCorrect}
+                                style={[
+                                    styles.revealButton,
+                                    { backgroundColor: theme.hintButton.backgroundColor },
+                                    checkResult?.isCorrect && { opacity: 0.5 }
+                                ]}
                                 onPress={() => {
                                     if (showHint) {
                                         // Just toggling off — no limit consumed
@@ -579,44 +670,54 @@ const App = () => {
                                     const overLimit = adSettings.extraHintAd && hintsUsed >= hintLimit;
                                     if (overLimit) {
                                         showRewardedHintAd(() => {
-                                            setHintsUsed(h => h + 1);
-                                            setHintViewed(true);
+                                            incrementHintsUsed();
+                                            persistHintViewed(riddle, answer);
                                             setShowHint(true);
                                             showTransientToast('Hint unlocked! 🎉');
                                             playSound('hint');
                                             vibrate('light');
                                         });
                                     } else {
-                                        setHintsUsed(h => h + 1);
-                                        setHintViewed(true);
+                                        incrementHintsUsed();
+                                        persistHintViewed(riddle, answer);
                                         setShowHint(true);
                                         playSound('hint');
                                         vibrate('light');
                                     }
                                 }}
                             >
-                                <MaterialCommunityIcons name="lightbulb-on-outline" size={20} color={theme.hintButton.color} />
-                                <Text style={[styles.revealButtonText, { color: theme.hintButton.color }]}>
+                                <MaterialCommunityIcons name="lightbulb-on-outline" size={20} color={theme.hintButton.color} style={checkResult?.isCorrect && { opacity: 0.5 }} />
+                                <Text style={[styles.revealButtonText, { color: theme.hintButton.color }, checkResult?.isCorrect && { opacity: 0.5 }]}>
                                     {showHint
                                         ? 'Hide Hint'
-                                        : (adSettings.extraHintAd && !hintViewed && hintsUsed >= hintLimit
-                                            ? '🎬 Watch for Hint'
+                                        : (adSettings.extraHintAd
+                                            ? (hintViewed || hintsUsed < hintLimit
+                                                ? `Show Hint (${Math.max(0, hintLimit - hintsUsed)} left)`
+                                                : '🎬 Watch for Hint')
                                             : 'Show Hint')
                                     }
                                 </Text>
                             </TouchableOpacity>
-
+ 
                             <TouchableOpacity 
                                 activeOpacity={0.8} 
-                                style={[styles.revealButton, { backgroundColor: theme.answerButton.backgroundColor }]} 
+                                disabled={checkResult?.isCorrect}
+                                style={[
+                                    styles.revealButton,
+                                    { backgroundColor: theme.answerButton.backgroundColor },
+                                    checkResult?.isCorrect && { opacity: 0.5 }
+                                ]} 
                                 onPress={() => {
                                     playSound('click');
                                     vibrate('light');
                                     setShowAnswer(!showAnswer);
+                                    if (!showAnswer) {
+                                        persistHintViewed(riddle, answer);
+                                    }
                                 }}
                             >
-                                <MaterialCommunityIcons name="eye-outline" size={20} color={theme.answerButton.color} />
-                                <Text style={[styles.revealButtonText, { color: theme.answerButton.color }]}>
+                                <MaterialCommunityIcons name="eye-outline" size={20} color={theme.answerButton.color} style={checkResult?.isCorrect && { opacity: 0.5 }} />
+                                <Text style={[styles.revealButtonText, { color: theme.answerButton.color }, checkResult?.isCorrect && { opacity: 0.5 }]}>
                                     {showAnswer ? 'Hide Answer' : 'Show Answer'}
                                 </Text>
                             </TouchableOpacity>
@@ -637,66 +738,79 @@ const App = () => {
                             </View>
                         )}
                     </ScrollView>
+                </KeyboardAvoidingView>
 
-                    {/* Bottom Pill Floating Toolbar */}
-                    <View style={styles.footerAdAndToolbarContainer}>
-                        {/* Banner Ad above toolbar */}
-                        {adSettings.showAds && (
-                            <View style={styles.riddleBannerAdContainer}>
-                                <BannerAd
-                                    unitId={AD_UNITS.banner}
-                                    size={BannerAdSize.BANNER}
-                                    requestOptions={{ requestNonPersonalizedAdsOnly: false }}
-                                />
+                {/* Bottom Pill Floating Toolbar and Sticky Banner Ad */}
+                <View style={[
+                    styles.footerAdAndToolbarContainer,
+                    { paddingBottom: adSettings.showAds ? 0 : Math.max(16, insets.bottom) }
+                ]}>
+                    <View style={[
+                        styles.footerToolbarContainer,
+                        { marginBottom: adSettings.showAds ? 10 : 0 }
+                    ]}>
+                        <View style={styles.footerToolbar}>
+                            <TouchableOpacity
+                                activeOpacity={0.8}
+                                style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]}
+                                onPress={handlePrev}
+                            >
+                                <Ionicons name="chevron-back" size={20} color={theme.text} />
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                activeOpacity={0.8}
+                                style={styles.toolbarButton}
+                                onPress={() => {
+                                    playSound('bookmark');
+                                    vibrate('medium');
+                                    toggleBookmark();
+                                }}
+                            >
+                                <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={24} color={theme.textSecondary} />
+                            </TouchableOpacity>
+
+                            {/* Central Riddle Number Badge */}
+                            <View style={[styles.centralBadgeContainer, { borderColor: theme.accent }]}>
+                                <MaterialCommunityIcons name="pound" size={16} color={theme.accent} style={styles.badgeStar} />
+                                <Text style={[styles.badgeIndexText, { color: theme.accent }]}>{cacheIndex + 1}</Text>
                             </View>
-                        )}
-                        <View style={styles.footerToolbarContainer}>
-                            <View style={styles.footerToolbar}>
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]}
-                                    onPress={handlePrev}
-                                >
-                                    <Ionicons name="chevron-back" size={20} color={theme.text} />
-                                </TouchableOpacity>
 
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.toolbarButton}
-                                    onPress={() => {
-                                        playSound('bookmark');
-                                        vibrate('medium');
-                                        toggleBookmark();
-                                    }}
-                                >
-                                    <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={24} color={theme.textSecondary} />
-                                </TouchableOpacity>
+                            <TouchableOpacity
+                                activeOpacity={0.8}
+                                style={styles.toolbarButton}
+                                onPress={() => setShowShareOptions(true)}
+                            >
+                                <Ionicons name="share-social-outline" size={24} color={theme.textSecondary} />
+                            </TouchableOpacity>
 
-                                {/* Central Riddle Number Badge */}
-                                <View style={[styles.centralBadgeContainer, { borderColor: theme.accent }]}>
-                                    <MaterialCommunityIcons name="pound" size={16} color={theme.accent} style={styles.badgeStar} />
-                                    <Text style={[styles.badgeIndexText, { color: theme.accent }]}>{cacheIndex + 1}</Text>
-                                </View>
-
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={styles.toolbarButton}
-                                    onPress={() => setShowShareOptions(true)}
-                                >
-                                    <Ionicons name="share-social-outline" size={24} color={theme.textSecondary} />
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    activeOpacity={0.8}
-                                    style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]}
-                                    onPress={handleNext}
-                                >
-                                    <Ionicons name="chevron-forward" size={20} color={theme.text} />
-                                </TouchableOpacity>
-                            </View>
+                            <TouchableOpacity
+                                activeOpacity={0.8}
+                                style={[styles.toolbarCircleButton, { borderColor: theme.borderColor }]}
+                                onPress={handleNext}
+                            >
+                                <Ionicons name="chevron-forward" size={20} color={theme.text} />
+                            </TouchableOpacity>
                         </View>
                     </View>
-                </KeyboardAvoidingView>
+
+                    {/* Banner Ad stuck to bottom system navigation bar */}
+                    {adSettings.showAds && (
+                        <View style={[
+                            styles.riddleBannerAdContainer,
+                            {
+                                paddingBottom: Math.max(6, insets.bottom),
+                                borderTopColor: theme.borderColor,
+                            }
+                        ]}>
+                            <BannerAd
+                                unitId={AD_UNITS.banner}
+                                size={BannerAdSize.BANNER}
+                                requestOptions={{ requestNonPersonalizedAdsOnly: false }}
+                            />
+                        </View>
+                    )}
+                </View>
             </View>
 
             {/* Share Modal */}
@@ -1025,11 +1139,12 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         alignItems: 'center',
-        paddingBottom: 16,
     },
     riddleBannerAdContainer: {
         alignItems: 'center',
-        marginBottom: 6,
+        width: '100%',
+        paddingTop: 8,
+        borderTopWidth: 1,
     },
     footerToolbarContainer: {
         paddingHorizontal: 24,

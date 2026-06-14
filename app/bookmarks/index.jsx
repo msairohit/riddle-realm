@@ -281,15 +281,16 @@ const Bookmarks = () => {
                     </View>
                 </View>
 
-                {/* FlatList of Bookmarks */}
-                <FlatList
-                    data={bookmarkedRiddles}
-                    keyExtractor={(item, index) => `${item.riddle}-${index}`}
-                    contentContainerStyle={[
-                        styles.listContentContainer,
-                        { paddingBottom: Math.max(24, insets.bottom + 16) }
-                    ]}
-                    showsVerticalScrollIndicator={false}
+                <View style={{ flex: 1 }}>
+                    {/* FlatList of Bookmarks */}
+                    <FlatList
+                        data={bookmarkedRiddles}
+                        keyExtractor={(item, index) => `${item.riddle}-${index}`}
+                        contentContainerStyle={[
+                            styles.listContentContainer,
+                            { paddingBottom: adSettings.showAds ? 24 : Math.max(24, insets.bottom + 16) }
+                        ]}
+                        showsVerticalScrollIndicator={false}
                     renderItem={({ item, index }) => (
                         <TouchableOpacity
                             activeOpacity={0.8}
@@ -307,29 +308,36 @@ const Bookmarks = () => {
                             <MaterialCommunityIcons name="chevron-right" size={20} color={theme.textSecondary} />
                         </TouchableOpacity>
                     )}
-                    ListEmptyComponent={() => (
-                        <View style={styles.emptyContainer}>
-                            <View style={[styles.emptyIconCircle, { backgroundColor: theme.accent + '12' }]}>
-                                <MaterialCommunityIcons name="bookmark-outline" size={42} color={theme.accent} />
+                        ListEmptyComponent={() => (
+                            <View style={styles.emptyContainer}>
+                                <View style={[styles.emptyIconCircle, { backgroundColor: theme.accent + '12' }]}>
+                                    <MaterialCommunityIcons name="bookmark-outline" size={42} color={theme.accent} />
+                                </View>
+                                <Text style={[styles.emptyText, { color: theme.text }]}>No Saved Puzzles</Text>
+                                <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
+                                    Bookmark interesting riddles to keep them here for later!
+                                </Text>
                             </View>
-                            <Text style={[styles.emptyText, { color: theme.text }]}>No Saved Puzzles</Text>
-                            <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
-                                Bookmark interesting riddles to keep them here for later!
-                            </Text>
+                        )}
+                    />
+
+                    {/* Sticky Banner Ad at bottom */}
+                    {adSettings.showAds && (
+                        <View style={[
+                            styles.stickyBannerAdContainer,
+                            {
+                                paddingBottom: Math.max(6, insets.bottom),
+                                borderTopColor: theme.borderColor,
+                            }
+                        ]}>
+                            <BannerAd
+                                unitId={AD_UNITS.banner}
+                                size={BannerAdSize.BANNER}
+                                requestOptions={{ requestNonPersonalizedAdsOnly: false }}
+                            />
                         </View>
                     )}
-                    ListFooterComponent={() =>
-                        adSettings.showAds ? (
-                            <View style={styles.bookmarkBannerAdContainer}>
-                                <BannerAd
-                                    unitId={AD_UNITS.banner}
-                                    size={BannerAdSize.BANNER}
-                                    requestOptions={{ requestNonPersonalizedAdsOnly: false }}
-                                />
-                            </View>
-                        ) : null
-                    }
-                />
+                </View>
 
                 {/* Detail View Modal */}
                 <Modal
@@ -597,6 +605,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginTop: 12,
         marginBottom: 8,
+    },
+    stickyBannerAdContainer: {
+        alignItems: 'center',
+        width: '100%',
+        paddingTop: 10,
+        borderTopWidth: 1,
     },
     bookmarkItem: {
         flexDirection: 'row',

@@ -62,6 +62,9 @@ const expoGoAds = {
     INTERSTITIAL: 'test-interstitial',
     REWARDED: 'test-rewarded',
   },
+  mobileAds: () => ({
+    initialize: () => Promise.resolve({}),
+  }),
 };
 
 const nativeAds = isExpoGo ? expoGoAds : require('react-native-google-mobile-ads');
@@ -70,7 +73,13 @@ export const AdEventType = nativeAds.AdEventType;
 export const BannerAd = nativeAds.BannerAd;
 export const BannerAdSize = nativeAds.BannerAdSize;
 export const InterstitialAd = nativeAds.InterstitialAd;
-export const InterstitialAdEventType = nativeAds.InterstitialAdEventType;
+export const InterstitialAdEventType = nativeAds.InterstitialAdEventType || nativeAds.AdEventType;
 export const RewardedAd = nativeAds.RewardedAd;
 export const RewardedAdEventType = nativeAds.RewardedAdEventType;
 export const TestIds = nativeAds.TestIds;
+
+const mobileAds = isExpoGo
+  ? expoGoAds.mobileAds
+  : (require('react-native-google-mobile-ads').default || require('react-native-google-mobile-ads'));
+
+export default mobileAds;

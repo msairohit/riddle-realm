@@ -18,7 +18,8 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.sai_rohit.riddlerealm"
+      "package": "com.sai_rohit.riddlerealm",
+      "versionCode": 1
     },
     "web": {
       "bundler": "metro",
@@ -36,17 +37,14 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-1254844707253302~8049954364",
-          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
-        }
-      ],
       "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true
     }
+  },
+  "react-native-google-mobile-ads": {
+    "android_app_id": "ca-app-pub-1254844707253302~8049954364",
+    "ios_app_id": "ca-app-pub-3940256099942544~1458002511"
   }
 }

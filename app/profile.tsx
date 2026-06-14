@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Switch, TouchableOpacity, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, Stack } from 'expo-router';
+import React, { useState } from 'react';
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme, ageRanges } from './ThemeContext';
-import { useSoundSettings } from '../hooks/useSoundSettings';
-import { useDailyNotifications } from '../hooks/useDailyNotifications';
 import NotificationTimePrompt from '../components/NotificationTimePrompt';
+import { useDailyNotifications } from '../hooks/useDailyNotifications';
+import { useSoundSettings } from '../hooks/useSoundSettings';
 import { playSound, vibrate } from '../utils/soundManager';
+import { ageRanges, useTheme } from './ThemeContext';
 
 export default function Profile() {
   const { theme, ageRange, setAgeRange } = useTheme();
@@ -69,15 +69,15 @@ export default function Profile() {
           <Text style={[styles.sectionHeader, { color: theme.textSecondary }]}>Theme & Style</Text>
           <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
             <Text style={[styles.cardDescription, { color: theme.textSecondary }]}>
-              Choose a theme matching your preference. Each theme adjusts difficulty recommendation and interface aesthetics.
+              Choose a theme matching your preference. Each theme has different interface aesthetics.
             </Text>
             <View style={styles.themeSwatchRow}>
               {ageRanges.map((r) => {
                 const swatchColors: Record<string, { dot: string; bg: string; label: string }> = {
-                  kids: { dot: '#FF9F43', bg: '#FFF5E6', label: 'Sunny (Kids)' },
-                  teens: { dot: '#7C3AED', bg: '#EDE9FE', label: 'Violet (Teens)' },
-                  adults: { dot: '#0D9488', bg: '#E0F2F1', label: 'Mint (Adults)' },
-                  seniors: { dot: '#1E40AF', bg: '#EFF6FF', label: 'Ocean (Seniors)' },
+                  kids: { dot: '#FF9F43', bg: '#FFF5E6', label: 'Sunny' },
+                  teens: { dot: '#7C3AED', bg: '#EDE9FE', label: 'Violet' },
+                  adults: { dot: '#0D9488', bg: '#E0F2F1', label: 'Mint' },
+                  seniors: { dot: '#1E40AF', bg: '#EFF6FF', label: 'Ocean' },
                 };
                 const swatch = swatchColors[r.id];
                 const isActive = ageRange === r.id;

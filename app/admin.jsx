@@ -13,7 +13,6 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme } from './ThemeContext';
 
 const ADMIN_KEYS = {
   BOOKMARK_LIMIT: '@admin_bookmark_limit',
@@ -27,7 +26,6 @@ const DEFAULT_BOOKMARK_LIMIT = 5;
 const DEFAULT_HINT_LIMIT = 3;
 
 export default function AdminScreen() {
-  const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
   const [bookmarkLimit, setBookmarkLimit] = useState(DEFAULT_BOOKMARK_LIMIT);
@@ -108,25 +106,25 @@ export default function AdminScreen() {
         <View style={[styles.stepperIconBg, { backgroundColor: iconBg }]}>
           <MaterialCommunityIcons name={icon} size={20} color={iconColor} />
         </View>
-        <Text style={[styles.stepperLabel, { color: theme.text }]}>{label}</Text>
+        <Text style={[styles.stepperLabel, { color: '#FFFFFF' }]}>{label}</Text>
       </View>
       <View style={styles.stepperControls}>
         <TouchableOpacity
-          style={[styles.stepBtn, { borderColor: theme.borderColor }]}
+          style={[styles.stepBtn, { borderColor: 'rgba(255,255,255,0.15)' }]}
           onPress={() => adjustValue(value, setter, -1, min, max)}
           activeOpacity={0.7}
         >
-          <MaterialCommunityIcons name="minus" size={18} color={theme.text} />
+          <MaterialCommunityIcons name="minus" size={18} color="#FFFFFF" />
         </TouchableOpacity>
-        <View style={[styles.stepValue, { backgroundColor: theme.accent + '15' }]}>
-          <Text style={[styles.stepValueText, { color: theme.accent }]}>{value}</Text>
+        <View style={[styles.stepValue, { backgroundColor: 'rgba(167,139,250,0.15)' }]}>
+          <Text style={[styles.stepValueText, { color: '#A78BFA' }]}>{value}</Text>
         </View>
         <TouchableOpacity
-          style={[styles.stepBtn, { borderColor: theme.borderColor }]}
+          style={[styles.stepBtn, { borderColor: 'rgba(255,255,255,0.15)' }]}
           onPress={() => adjustValue(value, setter, 1, min, max)}
           activeOpacity={0.7}
         >
-          <MaterialCommunityIcons name="plus" size={18} color={theme.text} />
+          <MaterialCommunityIcons name="plus" size={18} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
     </View>
@@ -139,18 +137,18 @@ export default function AdminScreen() {
           <MaterialCommunityIcons name={icon} size={20} color={iconColor} />
         </View>
         <View style={styles.toggleTexts}>
-          <Text style={[styles.stepperLabel, { color: theme.text }]}>{label}</Text>
+          <Text style={[styles.stepperLabel, { color: '#FFFFFF' }]}>{label}</Text>
           {subtitle ? (
-            <Text style={[styles.toggleSubtitle, { color: theme.textSecondary }]}>{subtitle}</Text>
+            <Text style={[styles.toggleSubtitle, { color: 'rgba(255,255,255,0.6)' }]}>{subtitle}</Text>
           ) : null}
         </View>
       </View>
       <Switch
         value={value}
         onValueChange={setter}
-        trackColor={{ false: '#D1D5DB', true: theme.accent + '80' }}
-        thumbColor={value ? theme.accent : '#9CA3AF'}
-        ios_backgroundColor="#D1D5DB"
+        trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(167,139,250,0.5)' }}
+        thumbColor={value ? '#A78BFA' : '#9CA3AF'}
+        ios_backgroundColor="rgba(255,255,255,0.1)"
       />
     </View>
   );

@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { Platform, UIManager } from 'react-native';
 import 'react-native-reanimated';
 import { ThemeProvider } from './ThemeContext'; // <-- Import ThemeProvider
+import mobileAds from '../utils/googleMobileAds';
 
 // Enable LayoutAnimation on Android (only if New Architecture is not active)
 if (
@@ -27,6 +28,14 @@ export default function RootLayout() {
     useEffect(() => {
         if (error) throw error;
     }, [error]);
+
+    useEffect(() => {
+        // Initialize Google Mobile Ads SDK on app launch
+        mobileAds()
+            .initialize()
+            .then((status) => console.log('AdMob initialization complete:', status))
+            .catch((err) => console.error('AdMob initialization error:', err));
+    }, []);
 
     useEffect(() => {
         if (loaded) {

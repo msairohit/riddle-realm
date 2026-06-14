@@ -6,3 +6,4 @@ export const InterstitialAdEventType: any;
 export const RewardedAd: any;
 export const RewardedAdEventType: any;
 export const TestIds: any;
+export default function mobileAds(): any;

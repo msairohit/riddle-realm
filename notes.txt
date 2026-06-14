@@ -10,6 +10,15 @@ future features
 (done)add sounds and vibrations for all actions.
 (done)send notifications daily with encouraging messages to do riddles.
 
+1.(done)banner ads should stick to the navigatin bar like all other apps. observed in both home screen and riddles page as well.
+2.(done)hints are resetting everytime. liek when I go back and come back again Im getting 3 free hints.
+3.(done)data on homescreen like "solved riddles" and "solved with hint" are not updating properly.
+4.(done)(will come from next day of installing app)notifications are not working, not coming at all, is it notification scheduled from the same day itself or from next day?
+5.(done)when newly installing alos the riddles are continuing from last position.
+6.(done)modify the admin screen, its not visible properly.
+7.(done)improve settings icon on homescreen both placement and icon itself.
+8.(done)if same hint is viewed again and again free hints are getting deducted.
+
 
 
 
