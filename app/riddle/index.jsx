@@ -710,9 +710,32 @@ const App = () => {
                                 onPress={() => {
                                     playSound('click');
                                     vibrate('light');
-                                    setShowAnswer(!showAnswer);
-                                    if (!showAnswer) {
-                                        persistHintViewed(riddle, answer);
+                                    if (showAnswer) {
+                                        setShowAnswer(false);
+                                    } else {
+                                        const reveal = () => {
+                                            setShowAnswer(true);
+                                            persistHintViewed(riddle, answer);
+                                        };
+
+                                        if (adSettings.showAds && interstitialRef.current) {
+                                            let unsub;
+                                            unsub = interstitialRef.current.addAdEventListener(
+                                                AdEventType.CLOSED,
+                                                () => {
+                                                    if (unsub) unsub();
+                                                    reveal();
+                                                }
+                                            );
+                                            try {
+                                                interstitialRef.current.show();
+                                            } catch (_err) {
+                                                if (unsub) unsub();
+                                                reveal();
+                                            }
+                                        } else {
+                                            reveal();
+                                        }
                                     }
                                 }}
                             >
